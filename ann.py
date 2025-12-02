@@ -115,25 +115,47 @@ custom_css = f"""
 st.markdown(custom_css, unsafe_allow_html=True)
 
 # ===========================================================
-# CUSTOM TRANSFORMER – MATCHES TRAINING VERSION
+# CUSTOM TRANSFORMER – ROBUST VERSION
 # ===========================================================
-# IMPORTANT: This must look like the class you used when fitting the pipeline
 class LabelEncoderTransformer(BaseEstimator, TransformerMixin):
-    def __init__(self):
-        self.encoders = {}
+    def __init__(self, columns=None):
+        self.columns = columns
+        self.label_encoders_ = {}
 
     def fit(self, X, y=None):
         X = pd.DataFrame(X)
-        for col in X.columns:
+        if self.columns is None:
+            self.columns = X.columns.tolist()
+
+        enc_map = {}
+        for col in self.columns:
             le = LabelEncoder()
-            le.fit(X[col])
-            self.encoders[col] = le
+            vals = X[col].astype(str).fillna("missing")
+            le.fit(vals)
+            enc_map[col] = le
+
+        self.label_encoders_ = enc_map
         return self
 
     def transform(self, X):
         X = pd.DataFrame(X).copy()
-        for col in X.columns:
-            X[col] = self.encoders[col].transform(X[col])
+
+        # Try both attributes so it works with however it was saved
+        enc_map = getattr(self, "label_encoders_", None)
+        if enc_map is None:
+            enc_map = getattr(self, "encoders", None)
+
+        if enc_map is None:
+            raise AttributeError(
+                "LabelEncoderTransformer has neither 'label_encoders_' nor 'encoders'. "
+                "This usually means the transformer was never fitted."
+            )
+
+        for col, le in enc_map.items():
+            vals = X[col].astype(str).fillna("missing")
+            known = set(le.classes_)
+            X[col] = [le.transform([v])[0] if v in known else -1 for v in vals]
+
         return X
 
 # ===========================================================
@@ -216,7 +238,6 @@ with st.form("airline_form"):
 # PREDICTION
 # ===========================================================
 if submitted:
-    # Build a single-row DataFrame – column names MUST match training
     data = {
         "Gender": gender,
         "Customer Type": customer_type,
@@ -276,5 +297,3 @@ if submitted:
         st.code(str(e), language="text")
 
 st.markdown("</div>", unsafe_allow_html=True)
-
-
